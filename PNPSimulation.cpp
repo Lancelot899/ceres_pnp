@@ -99,8 +99,8 @@ reprojectErr::reprojectErr(Eigen::Vector3d& pt, Eigen::Vector2d &uv,
                            std::shared_ptr<Camera> cam) :   pt_(pt), uv_(uv), cam_(cam) {
 
     //printf("index = %d\n", index++);
-    Eigen::HouseholderQR<Eigen::Matrix<double, 2, 2>> qr(information);
-    sqrt_information_ = qr.matrixQR().triangularView<Eigen::Upper>();
+    Eigen::LLT<Eigen::Matrix<double, 2, 2>> llt(information);
+    sqrt_information_ = llt.matrixL();
 }
 
 
