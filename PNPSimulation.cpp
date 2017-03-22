@@ -48,8 +48,10 @@ public:
     Eigen::Vector2d uv_;
     std::shared_ptr<Camera> cam_;
     Eigen::Matrix<double, 2, 2> sqrt_information_;
+    static int index;
 };
 
+int reprojectErr::index = 0;
 
 bool reprojectErr::Evaluate(double const *const *parameters, double *residuals, double **jacobians) const {
     Eigen::Map<const Eigen::Matrix<double, 6, 1>> lie(parameters[0]);
@@ -65,8 +67,6 @@ bool reprojectErr::Evaluate(double const *const *parameters, double *residuals, 
     residuals[0] = err(0);
     residuals[1] = err(1);
 
-    auto jacobian = jacobians[0];
-
     Eigen::Matrix<double, 2, 6> Jac = Eigen::Matrix<double, 2, 6>::Zero();
     Jac(0, 0) = cam_->fx_ / P(2); Jac(0, 2) = -P(0) / P(2) /P(2) * cam_->fx_; Jac(0, 3) = Jac(0, 2) * P(1);
     Jac(0, 4) = cam_->fx_ - Jac(0, 2) * P(0); Jac(0, 5) = -Jac(0, 0) * P(1);
@@ -77,9 +77,20 @@ bool reprojectErr::Evaluate(double const *const *parameters, double *residuals, 
 
     int k = 0;
     for(int i = 0; i < 2; ++i) {
-        for(int j = 0; j < 6; ++j)
-            jacobian[k++] = Jac(i, j);
+        for(int j = 0; j < 6; ++j) {
+            if(k >= 12)
+                return false;
+            if(jacobians) {
+                if(jacobians[0])
+                    jacobians[0][k] = Jac(i, j);
+            }
+            k++;
+        }
     }
+
+    //printf("jacobian ok!\n");
+
+    return true;
 
 }
 
@@ -87,6 +98,7 @@ reprojectErr::reprojectErr(Eigen::Vector3d& pt, Eigen::Vector2d &uv,
                            Eigen::Matrix<double, 2, 2>& information,
                            std::shared_ptr<Camera> cam) :   pt_(pt), uv_(uv), cam_(cam) {
 
+    //printf("index = %d\n", index++);
     Eigen::HouseholderQR<Eigen::Matrix<double, 2, 2>> qr(information);
     sqrt_information_ = qr.matrixQR().triangularView<Eigen::Upper>();
 }
@@ -94,6 +106,7 @@ reprojectErr::reprojectErr(Eigen::Vector3d& pt, Eigen::Vector2d &uv,
 
 class CERES_EXPORT SE3Parameterization : public ceres::LocalParameterization {
 public:
+    SE3Parameterization() {}
     virtual ~SE3Parameterization() {}
     virtual bool Plus(const double* x,
                       const double* delta,
@@ -117,7 +130,7 @@ bool SE3Parameterization::Plus(const double* x,
 
     Sophus::SE3d T = Sophus::SE3d::exp(lie);
     Sophus::SE3d delta_T = Sophus::SE3d::exp(delta_lie);
-    Eigen::Matrix<double, 6, 1> x_plus_delta_lie = (T * delta_T).log();
+    Eigen::Matrix<double, 6, 1> x_plus_delta_lie = (delta_T * T).log();
 
     for(int i = 0; i < 6; ++i) x_plus_delta[i] = x_plus_delta_lie(i, 0);
 
@@ -167,8 +180,10 @@ void PNPSimulation::start() {
     for(size_t i = 0; i < ptReals.size(); ++i) {
         ceres::CostFunction * costFun = new reprojectErr(ptReals[i], pix[i], information_, cam);
         problem.AddResidualBlock(costFun, new ceres::HuberLoss(0.5), se3);
-        problem.SetParameterization(se3, new SE3Parameterization());
+        //
     }
+
+    problem.SetParameterization(se3, new SE3Parameterization());
 
     ceres::Solver::Options options;
     options.minimizer_type = ceres::TRUST_REGION;
